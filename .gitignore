@@ -1,0 +1,6 @@
+*config.json
+#a copy of the DB structure is present and should be renamed to data.db for personal use
+*data.db 
+
+*log
+*.vscode
