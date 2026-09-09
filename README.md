@@ -22,3 +22,5 @@ the bot must also have message content intent enabled, not doing so prevents mes
 
 3. images and gifs dont embed due to the embed containing user info being there already, currently thinking about wether i should remove embed in favour of pure text which would allow for gifs and images to embed
 
+
+

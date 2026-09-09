@@ -12,6 +12,7 @@ test:
 	gcc $(SRC) $(libraries) $(CFLAGS) -o $(TARGETTEST)
 
 prod:
+	mkdir build
 	gcc $(SRC) $(libraries) $(CFLAGS) -o $(TARGETPROD)
 	cp src/copystructure.db build/data.db
 	cp src/configexample.json build/config.json
