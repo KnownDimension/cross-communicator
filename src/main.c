@@ -14,6 +14,9 @@ struct context {
     char original_messageID[32];
     char original_guildID[32];
     char original_channelID[32];
+
+    char destination_guildID[32];
+    char destination_channelID[32];
 };
 
 
@@ -35,16 +38,8 @@ sqlite3_stmt *stmt = NULL;
 
 
 
-
-
-
-
-
-
-
-
-
 void on_ready(struct discord *client, const struct discord_ready * event) {
+    printf("\n on ready starts \n");
     int Check;
     char * statements = "SELECT * FROM channel_select;";
     Check = sqlite3_prepare_v2(db, statements, -1, &stmt, NULL);
@@ -53,6 +48,9 @@ void on_ready(struct discord *client, const struct discord_ready * event) {
         sqlite3_close(db);
         exit(0);
     } 
+
+    printf("\n database check success \n");
+
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         struct ChannelGuildPair * temp  = realloc(pairs, (counter + 1) * sizeof(struct ChannelGuildPair));
 
@@ -62,9 +60,10 @@ void on_ready(struct discord *client, const struct discord_ready * event) {
         } // checks if realloc failed
 
         pairs = temp; // allocates the pairs pointer to whatever temp was
-
         const char * GuildID = (const char *)sqlite3_column_text(stmt, 0);
         const char * ChannelID = (const char *)sqlite3_column_text(stmt, 1);
+
+        printf("guild ID: %s \n channel ID: %s", GuildID, ChannelID);
 
         pairs[counter].GuildID = strdup(GuildID);
         pairs[counter].ChannelID = strdup(ChannelID); // must copy as pointer where the contents are stored may expire
@@ -93,7 +92,7 @@ void on_ready(struct discord *client, const struct discord_ready * event) {
 
     };
 
-    struct discord_create_guild_application_command channelConfig = {
+    struct discord_create_global_application_command channelConfig = {
         .name = "channel-configure",
         .description = "configures channel to use for cross communication",
     //    .default_permission = true,
@@ -105,18 +104,15 @@ void on_ready(struct discord *client, const struct discord_ready * event) {
             },
     };
 
-    struct discord_create_guild_application_command removeChannel = {
+    struct discord_create_global_application_command removeChannel = {
         .name = "channel-remove",
         .description = "remove this channel as the channel configured for cross communication",
     //    .default_permission = true,
         .default_member_permissions = 8,
     };
 
-    for (i = 0; i < event->guilds->size; i++ ) {
-        u64snowflake guild = event->guilds->array[i].id;
-        discord_create_guild_application_command(client, Appid, guild, &channelConfig, NULL); // used to create a slash command for each guild in an array of guilds
-        discord_create_guild_application_command(client, Appid, guild, &removeChannel, NULL); // used to create a slash command for each guild in an array of guilds
-    };
+    discord_create_global_application_command(client, Appid, &channelConfig, NULL); // used to create a slash command for each guild in an array of guilds
+    discord_create_global_application_command(client, Appid, &removeChannel, NULL); // used to create a slash command for each guild in an array of guilds
 
 
 
@@ -177,23 +173,68 @@ void on_interaction_create(struct discord * client, const struct discord_interac
 
 
 void on_message_sent(struct discord * client, struct discord_response * returned, const struct discord_message * event) {
+    printf("\n\n\n on message sent triggered");
+    
     const struct context *origin = returned->data;
 
-    char guild_id[32];
+
+    printf("\n\n========== MESSAGE SENT CALLBACK ==========\n");
+
+//    struct context *origin = returned->data;
+
+    printf("Context pointer: %p\n", (void *)origin);
+
+    printf(
+        "Original Message ID: [%s]\n",
+        origin->original_messageID
+    );
+
+    printf(
+        "Context Destination Guild: [%s]\n",
+        origin->destination_guildID
+    );
+
+    printf(
+        "Context Destination Channel: [%s]\n",
+        origin->destination_channelID
+    );
+
+    printf(
+        "Discord response Channel ID: [%llu]\n",
+        (unsigned long long)event->channel_id
+    );
+
+    printf(
+        "Discord response Message ID: [%llu]\n",
+        (unsigned long long)event->id
+    );
+
+    printf(
+        "Discord response Guild ID: [%llu]\n",
+        (unsigned long long)event->guild_id
+    );
+
+    printf("===========================================\n");
+
+
     char channel_id[32];
     char message_id[32];
 
-    snprintf(guild_id, sizeof(guild_id), "%llu", event->guild_id);
+
+
     snprintf(channel_id, sizeof(channel_id), "%llu", event->channel_id);
     snprintf(message_id, sizeof(message_id), "%llu", event->id);
 
 
-    const char * StoreMessage = "INSERT INTO cross_messages (original_message_id, guild_id, channel_id, message_id) VALUES(?, ?, ?, ?);";
+    const char * StoreMessage = "INSERT INTO cross_messages (OriginalMessageID, OriginalGuildID, OriginalChannelID, GuildID, ChannelID, MessageID) VALUES(?, ?, ?, ?, ?, ?);";
     sqlite3_prepare_v2(db, StoreMessage, -1, &stmt, NULL);
     sqlite3_bind_text(stmt, 1, origin->original_messageID, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, guild_id, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, channel_id, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 4, message_id, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, origin->original_guildID, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, origin->original_channelID, -1, SQLITE_TRANSIENT);
+
+    sqlite3_bind_text(stmt, 4, origin->destination_guildID, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, channel_id, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, message_id, -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
@@ -210,12 +251,15 @@ void on_message_sent(struct discord * client, struct discord_response * returned
 
 
 void on_message_create(struct discord *client, const struct discord_message *event) {
+    printf("beginning guildID  before loop: %llu", event->guild_id);
     // bot message dupe prevention and channel check section
     if (event->author->bot) return;
     printf("\n pre everything check \n");
     printf("\n message recieved \n");
     int ChannelCheck = 0; // debug for nov
     int count2 = 0;
+//    char * OID = NULL;
+    char OID[32];
 
     //////// used for later
     struct MessageGuildLink {
@@ -239,11 +283,13 @@ void on_message_create(struct discord *client, const struct discord_message *eve
 
 
 
-
+    const struct discord_guild *guild = discord_cache_get_guild(client, event->guild_id);
     // attachment handling section, so that attachment uploads work and are reflected to all the servers
     char messageContents[4096] = {0};
-    snprintf(messageContents, sizeof(messageContents), "%s", event->content ? event->content : "");
+    snprintf(messageContents, sizeof(messageContents), "**from: %s   in: %s**\n\n%s", event->author->username, guild->name, event->content ? event->content : "");
     char attachURLS[4096] = {0};
+    discord_unclaim(client, guild);
+
 
 
     if (event->attachments) { // if no images, the whole of this section isnt even touched
@@ -258,7 +304,7 @@ void on_message_create(struct discord *client, const struct discord_message *eve
 
         if (strlen(messageContents) >= 2000) { // checks to see if adding the URL's will go beyond discords limits
             char ErrorReply[2048];
-            snprintf(ErrorReply, sizeof(ErrorReply),"<@%llu>, due to your attached images, and how the bot works, the message exceeded discords message limit, try seperating the text and the images if your writing super long messages", (unsigned long long)event->author->id);
+            snprintf(ErrorReply, sizeof(ErrorReply),"<@%llu>, due to your attached images or the first line message, and how the bot works, the message exceeded discords message limit, try seperating the text and the images if your writing super long messages", (unsigned long long)event->author->id);
             
             struct discord_create_message ReplyErr = {
                    .content = ErrorReply
@@ -277,79 +323,10 @@ void on_message_create(struct discord *client, const struct discord_message *eve
 
     // original message context section
 
-    struct context * origin = malloc(sizeof(* origin));
-
-    snprintf(origin->original_messageID, sizeof(origin->original_messageID),"%llu", event->id);
-    snprintf(origin->original_guildID, sizeof(origin->original_guildID),"%llu", event->guild_id);
-    snprintf(origin->original_channelID, sizeof(origin->original_channelID),"%llu", event->channel_id);
-    printf("\n allocated origin values \n ");
-    //origin->original_messageID = event->id;
-    //origin->original_guildID = event->guild_id;
-    //origin->original_channelID = event->channel_id;
-
-    struct discord_ret_message returned = {
-        .done = on_message_sent,
-        .data = origin,
-    };
-
-    printf("\n ret message struct known \n ");
+   
 
 
 
-    // embed builder section
-    struct discord_embed embed = {
-        .color = 0x499281,
-        .timestamp = discord_timestamp(client)
-    };
-    
-    printf("\n struct made \n ");
-
-    printf("\n before pointer inspection \n ");
-    printf("author ptr:   %p\n", (void *)event->author);
-    printf("username ptr: %p\n", (void *)event->author->username);
-    printf("\n after pointer inspection \n ");
-    printf("\n before first author char \n ");
-    printf("first char: %c\n", event->author->username[0]);
-    printf("\n after first author char \n ");
-
-    char author[512] = "from ";
-    printf("\n before sprintf \n ");
-    snprintf(author, sizeof(author), "from: %s", event->author->username);
-    printf("\n after sprintf \n ");
-    discord_embed_set_title(&embed, author);
-
-    printf("\n title set \n ");
-
-    if (event->author->avatar) {
-        char * extension = ".png";
-        char * avHash = event->author->avatar;
-        if (strncmp(avHash, "a_", 2) == 0) {
-            extension = ".gif";
-        }
-        char avURL[512];
-        if (event->author->avatar) {
-            snprintf(avURL, sizeof(avURL),"https://cdn.discordapp.com/avatars/%llu/%s%s", (unsigned long long)event->author->id, avHash, extension );
-        }
-        discord_embed_set_image(&embed, avURL, NULL, 0, 0);
-    }
-    printf("\n avatar image set \n ");
-
-    const struct discord_guild *guild = discord_cache_get_guild(client, event->guild_id);
-    char guildEmbed[256];
-    snprintf(guildEmbed, sizeof(guildEmbed), "in: %s", guild->name);
-    discord_embed_set_author(&embed, guildEmbed, NULL, NULL, NULL);
-    discord_unclaim(client, guild);
-
-    printf("\n guild name author set \n ");
-
-
-    printf("\n embed built \n ");
-
-
-
-
-
-    // sql request referenced message section, skipped if no referenced message
 
     
     if (event->referenced_message) {
@@ -358,58 +335,20 @@ void on_message_create(struct discord *client, const struct discord_message *eve
         
 
         if (event->referenced_message->author->bot) {
-            char * OID = NULL;
+            printf("\n bot reference detected \n ");
             char referenceStatement[512]; //must find the original message ID first
-            snprintf(referenceStatement, sizeof(referenceStatement), "SELECT * FROM cross_messages WHERE MessageID = '%llu';", (unsigned long long)event->referenced_message->id);
+            snprintf(referenceStatement, sizeof(referenceStatement), "SELECT OriginalMessageID FROM cross_messages WHERE MessageID = '%llu';", (unsigned long long)event->referenced_message->id);
             sqlite3_prepare_v2(db, referenceStatement, -1, &stmt, NULL);
             if (sqlite3_step(stmt) == SQLITE_ROW) {
-                OID = strdup((char *)sqlite3_column_text(stmt, 0));
+                strcpy(OID, sqlite3_column_text(stmt, 0));
+                printf("OID original message: %s", OID );
                 if (OID == NULL) {
-                    printf("OID strdup failed, reference will probably break");
-                    OID = "0"; // failure handling to prevent program crashing, reference will probably not work however
+                    printf("\nOID strdup failed, the referencing will probably break\n");
                 }
             }
             sqlite3_finalize(stmt);
-
-            char referenceStatement2[512]; // start of the statement that would occur if the reference message referenced a person
-            snprintf(referenceStatement, sizeof(referenceStatement), "SELECT * FROM cross_messages WHERE OriginalMessageID = '%s';", OID);
-            sqlite3_prepare_v2(db, referenceStatement2, -1, &stmt, NULL);
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                
-                
-                const char * MessageID = (const char *)sqlite3_column_text(stmt, 3);
-                const char * GuildID = (const char *)sqlite3_column_text(stmt, 1);
-                const char * ChannelID = (const char *)sqlite3_column_text(stmt, 2);
-
-                MessageGuildPair[count2].GuildID = strdup(GuildID);
-                MessageGuildPair[count2].MessageID = strdup(MessageID); // must copy as pointer where the contents are stored may expire
-                MessageGuildPair[count2].ChannelID = strdup(ChannelID);
-
-                count2++;
-            }
-            free(OID);
-            sqlite3_finalize(stmt);
-
         } else {
-            char referenceStatement[512];
-            snprintf(referenceStatement, sizeof(referenceStatement), "SELECT * FROM cross_messages WHERE OriginalMessageID = '%llu';", (unsigned long long)event->referenced_message->id);
-
-            sqlite3_prepare_v2(db, referenceStatement, -1, &stmt, NULL);
-             
-            while (sqlite3_step(stmt) == SQLITE_ROW) {
-                
-                const char * MessageID = (const char *)sqlite3_column_text(stmt, 3);
-                const char * GuildID = (const char *)sqlite3_column_text(stmt, 1);
-                const char * ChannelID = (const char *)sqlite3_column_text(stmt, 2);
-
-                MessageGuildPair[count2].GuildID = strdup(GuildID);
-                MessageGuildPair[count2].MessageID = strdup(MessageID); // must copy as pointer where the contents are stored may expire
-                MessageGuildPair[count2].ChannelID = strdup(ChannelID);
-
-                count2++;
-            }
-            sqlite3_finalize(stmt);
-
+            snprintf(OID, sizeof(OID), "%llu", (unsigned long long)event->referenced_message->id);
         }
 
     }
@@ -417,31 +356,100 @@ void on_message_create(struct discord *client, const struct discord_message *eve
 
     char Guildchar[32];
 
+
+
     snprintf(Guildchar, sizeof(Guildchar), "%llu", (unsigned long long)event->guild_id);
     printf("\n start of message posting \n ");
+    int messageCheck;
+    int homereply = 0;
 
     // message posting section
     for (i = 0; i < counter; i++) {
+        printf("\n current GuildID loop: %s \n Guildchar: %s", pairs[i].GuildID, Guildchar);
         if (strcmp(pairs[i].GuildID, Guildchar) == 0) continue;
-        
 
         if (event->referenced_message) {
+            char postStatement[1024] = "SELECT ChannelID, MessageID, GuildID FROM cross_messages WHERE OriginalMessageID = ? AND GuildID = ?;";
             printf("\n reference message posting \n ");
-            char * Channeling;
-            char * Guilding;
-            char * Messaging;
-            
-            
-            
-            for (j = 0; j < count2; j++) {
-                if (strcmp(MessageGuildPair[j].ChannelID, pairs[i].ChannelID) == 0){ // locate the correct message reference pairs to use for a reply
-                    Channeling = MessageGuildPair[j].ChannelID;
-                    Guilding = MessageGuildPair[j].GuildID;
-                    Messaging = MessageGuildPair[j].MessageID;
+            char * Channeling = NULL;
+            char * Guilding = NULL;
+            char * Messaging = NULL;
+
+            printf("\n===== REFERENCE LOOKUP =====\n");
+            printf("OID: [%s]\n", OID);
+            printf("Destination GuildID: [%s]\n", pairs[i].GuildID);
+            printf("============================\n");
+
+            messageCheck = sqlite3_prepare_v2(db, postStatement, -1, &stmt, NULL);
+            if (messageCheck != SQLITE_OK) {
+                printf("prepare failure: %s \n", sqlite3_errmsg(db));
+
+
+            }
+            sqlite3_bind_text(stmt, 1, OID, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, pairs[i].GuildID, -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+
+
+
+                Messaging = strdup((char *)sqlite3_column_text(stmt, 1));
+                Guilding = strdup((char *)sqlite3_column_text(stmt, 2));
+                Channeling = strdup((char *)sqlite3_column_text(stmt, 0));
+
+                printf("\n Messaging: %s \n Guilding: %s \n Channeling: %s", Messaging, Guilding, Channeling);
+
+            }
+            sqlite3_finalize(stmt);
+
+            if (!Channeling || !Guilding || !Messaging) {
+                if (homereply == 0) {
+                    char postStatement2[1024] = "SELECT OriginalChannelID, OriginalMessageID, OriginalGuildID FROM cross_messages WHERE OriginalMessageID = ?;";
+                    messageCheck = sqlite3_prepare_v2(db, postStatement2, -1, &stmt, NULL);
+                    if (messageCheck != SQLITE_OK) {
+                        printf("prepare failure: %s \n", sqlite3_errmsg(db));
+                    }
+                    sqlite3_bind_text(stmt, 1, OID, -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(stmt, 2, pairs[i].GuildID, -1, SQLITE_TRANSIENT);
+                    while (sqlite3_step(stmt) == SQLITE_ROW) {
+                        Messaging = strdup((char *)sqlite3_column_text(stmt, 1));
+                        Guilding = strdup((char *)sqlite3_column_text(stmt, 2));
+                        Channeling = strdup((char *)sqlite3_column_text(stmt, 0));
+                        printf("\n Messaging: %s \n Guilding: %s \n Channeling: %s", Messaging, Guilding, Channeling);
+                        homereply = 1;
+                    }
+
+                } else {
+                    printf("\n one of the channeling, guilding or messaging char's are NULL, message will not be mirrored\n");
+                    free(Channeling);
+                    free(Guilding);
+                    free(Messaging);
+                    continue;
                 }
             }
 
 
+
+            struct context * origin = malloc(sizeof(* origin));
+
+            snprintf(origin->original_messageID, sizeof(origin->original_messageID),"%llu", event->id);
+            snprintf(origin->original_guildID, sizeof(origin->original_guildID),"%llu", event->guild_id);
+            snprintf(origin->original_channelID, sizeof(origin->original_channelID),"%llu", event->channel_id);
+
+
+
+            snprintf(origin->destination_guildID, sizeof(origin->destination_guildID),"%s", pairs[i].GuildID);
+            snprintf(origin->destination_channelID, sizeof(origin->destination_channelID),"%s", pairs[i].ChannelID);
+            
+
+            printf("\n allocated origin values \n ");
+        
+
+            struct discord_ret_message returned = {
+                .done = on_message_sent,
+                .data = origin,
+            };
+
+            printf("\n ret message struct known \n ");
 
 
             struct discord_create_message MessageType1 = { 
@@ -451,15 +459,15 @@ void on_message_create(struct discord *client, const struct discord_message *eve
                         .channel_id = strtoull(Channeling, NULL, 10),
                         .guild_id = strtoull(Guilding, NULL, 10),
                     },
-                    .embeds = &(struct discord_embeds){
-                        .size = 1,
-                        .array = &embed,
-                    },
+
             };
 
 
-
             discord_create_message(client, strtoull(Channeling, NULL, 10), &MessageType1, &returned);
+
+            free(Channeling);
+            free(Guilding);
+            free(Messaging);
 
                 
         } else if (!event->referenced_message) {
@@ -467,12 +475,31 @@ void on_message_create(struct discord *client, const struct discord_message *eve
             char * Channeling;
             Channeling = pairs[i].ChannelID;
 
+
+            struct context * origin = malloc(sizeof(* origin));
+
+            snprintf(origin->original_messageID, sizeof(origin->original_messageID),"%llu", event->id);
+            snprintf(origin->original_guildID, sizeof(origin->original_guildID),"%llu", event->guild_id);
+            snprintf(origin->original_channelID, sizeof(origin->original_channelID),"%llu", event->channel_id);
+
+
+
+            snprintf(origin->destination_guildID, sizeof(origin->destination_guildID),"%s", pairs[i].GuildID);
+            snprintf(origin->destination_channelID, sizeof(origin->destination_channelID),"%s", pairs[i].ChannelID);
+
+            printf("\n allocated origin values \n ");
+
+
+            struct discord_ret_message returned = {
+                .done = on_message_sent,
+                .data = origin,
+            };
+
+            printf("\n ret message struct known \n ");
+
+
             struct discord_create_message MessageType2 = { 
                 .content = messageContents,
-                .embeds = &(struct discord_embeds){
-                        .size = 1,
-                        .array = &embed,
-                },
             };
             discord_create_message(client, strtoull(Channeling, NULL, 10), &MessageType2, &returned);
             printf("\n all stages complete \n ");
