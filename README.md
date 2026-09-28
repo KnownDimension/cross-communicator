@@ -16,11 +16,8 @@ the bot must also have message content intent enabled, not doing so prevents mes
 
 ## current issues to resolve
 
-1. the bot only registers slash commands in servers its already in, it does not register them when it joins a new server, the bot must be restarted
+1. pairs is also only updated based on whats in the database on server start, not after, the bot must be restarted upon channel registration
 
-2. pairs is also only updated based on whats in the database on server start, not after, the bot must be restarted upon channel registration
-
-3. images and gifs dont embed due to the embed containing user info being there already, currently thinking about wether i should remove embed in favour of pure text which would allow for gifs and images to embed
 
 
 

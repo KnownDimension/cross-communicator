@@ -131,10 +131,13 @@ void on_interaction_create(struct discord * client, const struct discord_interac
     if (event->type != DISCORD_INTERACTION_APPLICATION_COMMAND) return;
     /* Return in case user input is missing for some reason */
     if (!event->data && !strcmp(event->data->name, "channel-remove") == 0 || !event->data->options && !strcmp(event->data->name, "channel-remove") == 0) return;
-
-    char * channelchosen = "tbd";
+    unsigned long long isReal = 0;
+    char isExist[1024] = "SELECT EXISTS(SELECT 1 FROM channel_select WHERE GuildID = ?);"; 
+//    char * channelchosen = "tbd";
 
     if (strcmp(event->data->name, "channel-configure") == 0) {
+        
+        
         printf("\n\n adding channel guild combo \n\n");
         u64snowflake channelSnow = strtoull(event->data->options->array[0].value, NULL, 10);
         char guildSlash[32];
@@ -142,7 +145,30 @@ void on_interaction_create(struct discord * client, const struct discord_interac
         snprintf(guildSlash, sizeof(guildSlash), "%llu", event->guild_id);
         snprintf(channelSlash, sizeof(channelSlash), "%llu", channelSnow);
 
-        const char * sqlStatement = "INSERT INTO channel_select VALUES(?, ?);";
+
+
+
+        sqlite3_prepare_v2(db, isExist, -1, &stmt, NULL);
+        sqlite3_bind_text(stmt, 1, guildSlash, -1, SQLITE_TRANSIENT);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            isReal = sqlite3_column_int(stmt, 0);
+        }
+
+        if (isReal != 0) {
+            struct discord_create_message real = { 
+                .content = "channel already configured for this server, remove it, and configure again"
+            };
+            discord_create_message(client, strtoull(channelSlash, NULL, 10), &real, NULL);
+            return;
+        }
+
+        sqlite3_finalize(stmt);
+
+
+
+
+        char sqlStatement[512] = "INSERT INTO channel_select VALUES(?, ?);";
         sqlite3_prepare_v2(db, sqlStatement, -1, &stmt, NULL);
         sqlite3_bind_text(stmt, 1, guildSlash, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, channelSlash, -1, SQLITE_TRANSIENT);
@@ -155,8 +181,39 @@ void on_interaction_create(struct discord * client, const struct discord_interac
         discord_create_message(client, strtoull(channelSlash, NULL, 10), &confirmation, NULL);
 
     } else if (strcmp(event->data->name, "channel-remove") == 0) {
+        char channelSlash2[32];
+        char guildSlash2[32];
+        snprintf(guildSlash2, sizeof(guildSlash2), "%llu", event->guild_id);
+        snprintf(channelSlash2, sizeof(channelSlash2), "%llu", event->channel_id); // only used for posting to channel command was made in
+
+
+
+
+        sqlite3_prepare_v2(db, isExist, -1, &stmt, NULL);
+        sqlite3_bind_text(stmt, 1, guildSlash2, -1, SQLITE_TRANSIENT);
+        
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            isReal = sqlite3_column_int(stmt, 0);
+        }
+
+        if (isReal == 0) {
+            struct discord_create_message real = { 
+                .content = "there is no channel guild link for this server to remove,"
+            };
+            discord_create_message(client, strtoull(channelSlash2, NULL, 10), &real, NULL);
+        }
+
+        sqlite3_finalize(stmt);
+
+
+
+
+
+
+
+
         printf("\n\n removing channel guild combo \n\n");
-        const char * removeStatement = "DELETE FROM channel_select WHERE GuildID = ?;";
+        char removeStatement[512] = "DELETE FROM channel_select WHERE GuildID = ?;";
         char guildSlash[32];
         snprintf(guildSlash, sizeof(guildSlash), "%llu", event->guild_id);
         
@@ -177,44 +234,6 @@ void on_message_sent(struct discord * client, struct discord_response * returned
     
     const struct context *origin = returned->data;
 
-
-    printf("\n\n========== MESSAGE SENT CALLBACK ==========\n");
-
-//    struct context *origin = returned->data;
-
-    printf("Context pointer: %p\n", (void *)origin);
-
-    printf(
-        "Original Message ID: [%s]\n",
-        origin->original_messageID
-    );
-
-    printf(
-        "Context Destination Guild: [%s]\n",
-        origin->destination_guildID
-    );
-
-    printf(
-        "Context Destination Channel: [%s]\n",
-        origin->destination_channelID
-    );
-
-    printf(
-        "Discord response Channel ID: [%llu]\n",
-        (unsigned long long)event->channel_id
-    );
-
-    printf(
-        "Discord response Message ID: [%llu]\n",
-        (unsigned long long)event->id
-    );
-
-    printf(
-        "Discord response Guild ID: [%llu]\n",
-        (unsigned long long)event->guild_id
-    );
-
-    printf("===========================================\n");
 
 
     char channel_id[32];
@@ -317,16 +336,7 @@ void on_message_create(struct discord *client, const struct discord_message *eve
     }
 
 
-
-    
-
-
     // original message context section
-
-   
-
-
-
 
     
     if (event->referenced_message) {
@@ -409,7 +419,6 @@ void on_message_create(struct discord *client, const struct discord_message *eve
                         printf("prepare failure: %s \n", sqlite3_errmsg(db));
                     }
                     sqlite3_bind_text(stmt, 1, OID, -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(stmt, 2, pairs[i].GuildID, -1, SQLITE_TRANSIENT);
                     while (sqlite3_step(stmt) == SQLITE_ROW) {
                         Messaging = strdup((char *)sqlite3_column_text(stmt, 1));
                         Guilding = strdup((char *)sqlite3_column_text(stmt, 2));
@@ -514,6 +523,102 @@ void on_message_create(struct discord *client, const struct discord_message *eve
 
 
 
+
+
+
+
+
+void on_message_delete(struct discord *client, const struct discord_message_delete *event) {
+    int ChannelCheck = 0;
+    unsigned long long isBot = 0;
+    int sqlBot;
+    
+    for (i = 0; i < counter; i++) {
+        if (strtoull(pairs[i].ChannelID, NULL, 10) == event->channel_id && strtoull(pairs[i].GuildID, NULL, 10) == event->guild_id) { 
+            ChannelCheck = 1;
+        }    
+    }
+
+    if (ChannelCheck == 0) return; // checking if channel guild pairs match to avoid unnecesary sql calls, for which multiple will be made
+    
+    char ToDelete[32];
+    snprintf(ToDelete, sizeof(ToDelete),"%llu", event->id);
+
+    char botChecker[1024] = "SELECT EXISTS(SELECT 1 FROM cross_messages WHERE MessageID = ?);";
+    sqlBot = sqlite3_prepare_v2(db, botChecker, -1, &stmt, NULL);
+    if (sqlBot != SQLITE_OK) {
+        printf("cannot check for bot in delete message: %s \n", sqlite3_errmsg(db));
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, ToDelete, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        isBot = sqlite3_column_int(stmt, 0);
+    }
+
+    if (isBot != 0) return; // poor mans own cross communicator message checker
+
+    
+    int deleteCheck;
+    char messageID[32];
+    char * messageTemp;
+    char channelID[32];
+    char * channelTemp;
+
+
+    char deleteFetch[1024] = "SELECT MessageID, ChannelID FROM cross_messages WHERE OriginalMessageID = ?;";
+    deleteCheck = sqlite3_prepare_v2(db, deleteFetch, -1, &stmt, NULL);
+    if (deleteCheck != SQLITE_OK) {
+        printf("cannot delete message: %s \n", sqlite3_errmsg(db));
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, ToDelete, -1, SQLITE_TRANSIENT);
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+
+        messageTemp = strdup((char *)sqlite3_column_text(stmt, 0));
+        channelTemp = strdup((char *)sqlite3_column_text(stmt, 1));
+
+        strcpy(messageID, messageTemp);
+        strcpy(channelID, channelTemp);
+
+
+        discord_delete_message(client, strtoull(channelID, NULL, 10), strtoull(messageID, NULL, 10), NULL, NULL);
+
+        free(channelTemp);
+        free(messageTemp);
+
+    }
+    sqlite3_finalize(stmt);
+
+
+    char trueDelete[1024] = "DELETE FROM cross_messages WHERE OriginalMessageID = ?;";
+    deleteCheck = sqlite3_prepare_v2(db, trueDelete, -1, &stmt, NULL);
+    if (deleteCheck != SQLITE_OK) {
+        printf("cannot clear database: %s \n", sqlite3_errmsg(db));
+        return;
+    }
+    sqlite3_bind_text(stmt, 1, ToDelete, -1, SQLITE_TRANSIENT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 int main () {
 
 //    sqlite3 *db;
@@ -544,6 +649,7 @@ int main () {
     discord_set_on_ready(client, &on_ready);
     discord_set_on_interaction_create(client, &on_interaction_create);
     discord_set_on_message_create(client, &on_message_create);
+    discord_set_on_message_delete(client, &on_message_delete);
     discord_cache_enable(client, DISCORD_CACHE_GUILDS);
 
 
