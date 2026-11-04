@@ -11,7 +11,7 @@ make prod
 ```
 in the root directory of the project
 
-there will be config.json and and data.db, data.db doesnt need to be touched but config.json must be edited to have your discord token, so that the bot can actually function
+there will be config.json and and data.db, data.db doesnt need to be touched but config.json must be edited to have your discord token, so that the bot can actually function,
 the bot must also have message content intent enabled, not doing so prevents message content from being cross communicated
 
 ## current issues to resolve
